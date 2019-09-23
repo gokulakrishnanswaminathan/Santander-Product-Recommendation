@@ -1,0 +1,1249 @@
+
+```{r}
+install.packages("imputeTS")
+library(imputeTS)
+install.packages("rpart")
+library(rpart)
+install.packages("rpart.plot")
+library(rpart.plot)
+install.packages("randomForest")
+library(randomForest)
+install.packages("ggplot2")
+library(ggplot2)
+install.packages("Metrics")
+library(Metrics)
+install.packages("caret")
+library(caret)
+install.packages("leaps")
+library(leaps)
+install.packages("corrplot")
+library(corrplot)
+install.packages("glmnet")
+library(glmnet)
+install.packages("gbm")
+library(gbm)
+install.packages("gam")
+library(gam)
+install.packages("mice")
+library(mice)
+install.packages("mda")
+library(mda)
+options(java.parameters = "-Xmx12g") 
+install.packages("rJava")
+library(rJava)
+install.packages("bartMachine")
+library(bartMachine)
+install.packages("e1071")
+library(e1071)
+install.packages("imputeTS")
+library(imputeTS)
+install.packages("SMOTE")
+library(SMOTE)
+install.packages("UBL")
+library(UBL)
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+
+```
+
+```{r}
+################################## PREPROCESSING AND CLEANING #########################################
+
+# Read the file Dataset1
+df<- read.csv(file.choose())
+
+my_theme <- theme_bw() +
+  theme(axis.title=element_text(size=24),
+        plot.title=element_text(size=36),
+        axis.text =element_text(size=16))
+
+my_theme_dark <- theme_dark() +
+  theme(axis.title=element_text(size=24),
+        plot.title=element_text(size=36),
+        axis.text =element_text(size=16))
+
+## NA CHECK ##
+
+sapply(df,function(x)any(is.na(x)))
+
+```
+
+
+```{r}
+
+## Checking Age distribution ##
+ggplot(data=df,aes(x=age)) + 
+  geom_bar(alpha=0.75,fill="tomato",color="black") +
+  ggtitle("Age Distribution") + 
+  my_theme
+```
+
+
+```{r}
+
+### Fixing abrupt age values ##
+df$age[(df$age < 18)]  <- mean(df$age[(df$age >= 18) & (df$age <=30)],na.rm=TRUE)
+df$age[(df$age > 100)] <- mean(df$age[(df$age >= 30) & (df$age <=100)],na.rm=TRUE)
+df$age[is.na(df$age)]  <- median(df$age,na.rm=TRUE)
+df$age                 <- round(df$age)
+ggplot(data=df,aes(x=age)) + 
+  geom_bar(alpha=0.75,fill="tomato",color="black") +
+  xlim(c(18,100)) + 
+  ggtitle("Age Distribution") + 
+  my_theme
+```
+
+
+```{r}
+
+## Cleaning CusIndex, Seniority and indrel##
+sum(is.na(df$NewCusIndex))
+
+months.active <- df[is.na(df$NewCusIndex),] %>%
+  group_by(ID) %>%
+  summarise(months.active=n())  %>%
+  select(months.active)
+max(months.active)
+df$NewCusIndex[is.na(df$NewCusIndex)] <- 1
+
+sum(is.na(df$Seniority))
+summary(df[is.na(df$Seniority),]%>%select(ID))
+
+df$Seniority[is.na(df$Seniority)] <- min(df$Seniority,na.rm=TRUE)
+df$Seniority[df$Seniority<0]<- 0
+df$indrel[is.na(df$indrel)] <-1
+```
+
+
+```{r}
+
+## NA Check ##
+sapply(df,function(x)any(is.na(x)))
+```
+
+
+```{r}
+
+## imputing type ##
+sum(is.na(df$type))
+df$type[is.na(df$type)] <-1
+```
+
+```{r}
+## continue cleaning ##
+sum(is.na(df$add_type))
+table(df$add_type) #Reason to drop as all are 1
+
+df<-subset(df,select=-c(add_type))
+
+sum(is.na(df$activity_index))
+df$activity_index[is.na(df$activity_index)] <- median(df$activity_index,na.rm=TRUE)
+```
+
+```{r}
+
+## Fixinf unkown values ##
+unique(df$prov_name)
+df$prov_name[df$prov_name==""] <- "UNKNOWN"
+
+sum(is.na(df$gross_income))
+
+df %>%
+  filter(!is.na(gross_income)) %>%
+  group_by(prov_name) %>%
+  summarise(med.income = median(gross_income)) %>%
+  arrange(med.income) %>%
+  mutate(city=factor(prov_name,levels=prov_name)) %>% # the factor() call prevents reordering the names
+  ggplot(aes(x=city,y=med.income)) + 
+  geom_point(color="#c60b1e") + 
+  guides(color=FALSE) + 
+  xlab("City") +
+  ylab("Median Income") +  my_theme + 
+  theme(axis.text.x=element_blank(), axis.ticks = element_blank()) + 
+  geom_text(aes(x=city,y=med.income,label=city),angle=90,hjust=-.15) +
+  theme(plot.background=element_rect(fill="#c60b1e"),
+        panel.background=element_rect(fill="#ffc400"),
+        panel.grid =element_blank(),
+        axis.title =element_text(color="#ffc400"),
+        axis.text  =element_text(color="#ffc400"),
+        plot.title =element_text(color="#ffc400",size=20)) +
+  ylim(c(50000,180000)) +
+  ggtitle("Income Distribution by City")
+```
+
+
+```{r}
+
+### Check income behaviour ###
+new.incomes <-df %>%
+  select(prov_name) %>%
+  merge(df %>%
+  group_by(prov_name) %>%
+  summarise(med.income=median(gross_income,na.rm=TRUE)),by="prov_name") %>%
+  select(prov_name,med.income) %>%
+  arrange(prov_name)
+df <- arrange(df,prov_name)
+df$gross_income[is.na(df$gross_income)] <- new.incomes$med.income[is.na(df$gross_income)]
+rm(new.incomes)
+
+df$gross_income[is.na(df$gross_income)] <- median(df$gross_income,na.rm=TRUE)
+df <- arrange(df,date)
+sapply(df,function(x)any(is.na(x)))
+```
+
+
+```{r}
+
+## check for ordinals and cardinals ##
+char.cols <- names(df)[sapply(df,is.character)]
+for (name in char.cols){
+  print(sprintf("Unique values for %s:", name))
+  print(unique(df[[name]]))
+  cat('\n')
+}
+```
+
+```{r}
+
+## Fixing blank values in columns ##
+df$relation_type[df$relation_type==""]<-"A"
+df$type[df$type==""]<-"1"
+df$type[df$type=="P"]<-"5" # change to just numbers because it currently contains letters and numbers
+df$type<- as.factor(as.integer(df$type))
+df$Residence[df$Residence==""]<-"UNKNOWN"
+df$sex[df$sex==""]<-"UNKNOWN"
+df$Deceased[df$Deceased==""]<-"N"
+df$EmpIndex[df$EmpIndex==""]<-"UNKNOWN"
+df$foreign_index[df$foreign_index==""]<-"UNKNOWN"
+df$res_index[df$res_index==""]<- "UNKNOWN"
+df$spouse_index[df$spouse_index==""]<-"UNKNOWN"
+df$segmentation[df$segmentation==""]<-"UNKNOWN"
+```
+
+
+
+
+```{r}
+
+## More cleaning ## 
+summary(df)
+str(df)
+table(df$segmentation)
+df$segmentation[df$segmentation=="01 - TOP"] <- 1
+df$segmentation[df$segmentation=="02 - PARTICULARES"] <- 2
+df$segmentation[df$segmentation=="03 - UNIVERSITARIO"] <- 3
+df$segmentation[df$segmentation=="UNKNOWN"] <- 2
+
+
+
+## CLASS CONVERSION ###
+char.cols <- names(df)[sapply(df,is.character)]
+char.cols
+for (name in char.cols){
+  df[[name]]<-as.factor(df[[name]])
+}
+
+str(df)
+
+df$NewCusIndex<-as.factor(df$NewCusIndex)
+df$indrel<-as.factor(df$indrel)
+df$activity_index<-as.factor(df$activity_index)
+
+df<-subset(df,select=-c(prov_code))
+
+## FINAL CHECK FOR NA ##
+sapply(df,function(x)any(is.na(x)))
+
+## SAVE THHIS FILE ###
+#save(df,file = "df123_clean.Rdata")
+
+
+```
+
+
+```{r}
+## CHECK IMBALNCE ##
+pie(prop.table(my.table),labels=c("Current","Debit Card","Payrol Account","Particulars Account"), main="Product distribution")
+  ?pie
+```
+
+
+
+```{r}
+barplot(df, ylab = "Product", xlab = "Sex", main = "Product Count based on Gender", col=c("black", "blue", "red", "green"), beside = FALSE, xlim=c(0,1), width = 0.3)
+df$label<-as.factor(df$label)
+str(df)
+
+```
+
+
+
+```{r}
+
+### SOME EDA TO STUDY THE DISTRIBUTION OF THE SELECTED FOUR PRODUCTS ## 
+df %>%
+  ggplot(aes(x=age,y=log(gross_income))) +
+  geom_point(alpha=0.5,aes(color=label)) +
+  my_theme_dark +
+  xlab("Age") +
+  ylab("Income (log scale)") + 
+  ggtitle("Income vs. Age") +
+  theme(
+        legend.text  = element_text(size=14),
+        legend.title = element_text(size=18)) +
+  scale_color_manual(values=c("white","purple","red","black"))
+```
+
+
+```{r}
+df %>%
+  group_by(ID) %>%
+  summarise(age=max(age),Seniority=max(Seniority)) %>%
+  select(age,Seniority) %>%
+  ggplot(aes(x=age,y=Seniority)) +
+  geom_point(alpha=0.4) +
+  ggtitle("Seniority vs. Age") + 
+  my_theme
+```
+
+
+```{r}
+df %>%
+  group_by(Seniority,label) %>%
+  summarise(counts=n()) %>%
+  ggplot(aes(x=factor(Seniority),y=log(counts))) +
+  geom_point(alpha=0.6,aes(color=label)) +
+  my_theme_dark +
+  xlab("Seniority (Months)") +
+  ylab("Count of Product") + 
+  ggtitle("Product Count \n by Seniority") +
+  theme(axis.text    = element_blank(),
+        legend.text  = element_text(size=14),
+        legend.title = element_text(size=18)) +
+  scale_color_manual(values=c("white","purple","red","black"))
+```
+
+
+```{r}
+df %>%
+  group_by(prov_name,label) %>%
+  summarise(y=mean(age)) %>%
+  ggplot(aes(x=factor(prov_name,levels=sort(unique(prov_name),decreasing=TRUE)),y=y)) +
+  geom_bar(stat="identity",aes(fill=label)) +
+  geom_text(aes(label=prov_name),
+            y=0.2,
+            hjust=0,
+            angle=0,
+            size=3,
+            color="#222222") +
+  coord_flip() +
+  my_theme_dark +
+  xlab("City") +
+  ylab("Product Usage") + 
+  ggtitle("Product Distribution by \n Mean Age per City") +
+  theme(axis.text    = element_blank(),
+        legend.text  = element_text(size=14),
+        legend.title = element_text(size=18)) +
+  scale_fill_manual(values=c("black","purple","red","white"))
+```
+```{r}
+df %>%
+  group_by(prov_name,label) %>%
+  summarise(y=mean(gross_income)) %>%
+  ggplot(aes(x=factor(prov_name,levels=sort(unique(prov_name),decreasing=TRUE)),y=y)) +
+  geom_bar(stat="identity",aes(fill=label)) +
+  geom_text(aes(label=prov_name),
+            y=0.2,
+            hjust=0,
+            angle=0,
+            size=3,
+            color="#222222") +
+  coord_flip() +
+  my_theme_dark +
+  xlab("City") +
+  ylab("Product Usage") + 
+  ggtitle("Product Distribution by \n Mean Income per City") +
+  theme(axis.text    = element_blank(),
+        legend.text  = element_text(size=14),
+        legend.title = element_text(size=18)) +
+  scale_fill_manual(values=c("black","purple","red","white"))
+```
+
+
+```{r}
+df %>%
+  group_by(prov_name,label) %>%
+  summarise(y=mean(Seniority)) %>%
+  ggplot(aes(x=factor(prov_name,levels=sort(unique(prov_name),decreasing=TRUE)),y=y)) +
+  geom_bar(stat="identity",aes(fill=label)) +
+  geom_text(aes(label=prov_name),
+            y=0.2,
+            hjust=0,
+            angle=0,
+            size=3,
+            color="#222222") +
+  coord_flip() +
+  my_theme_dark +
+  xlab("City") +
+  ylab("Product Usage") + 
+  ggtitle("Product Distribution by \n Mean Seniority per City") +
+  theme(axis.text    = element_blank(),
+        legend.text  = element_text(size=14),
+        legend.title = element_text(size=18)) +
+  scale_fill_manual(values=c("black","purple","red","white"))
+
+```
+
+
+```{r}
+df %>%
+  group_by(EmpIndex,label) %>%
+  summarise(y=mean(age)) %>%
+  ggplot(aes(x=factor(EmpIndex,levels=sort(unique(EmpIndex),decreasing=TRUE)),y=y)) +
+  geom_bar(stat="identity",aes(fill=label)) +
+  geom_text(aes(label=EmpIndex),
+            y=0.2,
+            hjust=0,
+            angle=0,
+            size=10,
+            color="#222222") +
+  coord_flip() +
+  my_theme_dark +
+  xlab("Emp Index") +
+  ylab("Product Usage") + 
+  ggtitle("Product Distribution by \n Mean Age per Emp Index") +
+  theme(axis.text    = element_blank(),
+        legend.text  = element_text(size=14),
+        legend.title = element_text(size=18)) +
+  scale_fill_manual(values=c("black","purple","red","white"))
+
+
+```
+
+
+```{r}
+df %>%
+  group_by(EmpIndex,label) %>%
+  summarise(y=mean(gross_income)) %>%
+  ggplot(aes(x=factor(EmpIndex,levels=sort(unique(EmpIndex),decreasing=TRUE)),y=y)) +
+  geom_bar(stat="identity",aes(fill=label)) +
+  geom_text(aes(label=EmpIndex),
+            y=0.2,
+            hjust=0,
+            angle=0,
+            size=10,
+            color="#222222") +
+  coord_flip() +
+  my_theme_dark +
+  xlab("Emp Index") +
+  ylab("Product Usage") + 
+  ggtitle("Product Distribution by \n Mean Income per Emp Index") +
+  theme(axis.text    = element_blank(),
+        legend.text  = element_text(size=14),
+        legend.title = element_text(size=18)) +
+  scale_fill_manual(values=c("black","purple","red","white"))
+```
+
+
+```{r}
+df %>%
+  group_by(EmpIndex,label) %>%
+  summarise(y=mean(Seniority)) %>%
+  ggplot(aes(x=factor(EmpIndex,levels=sort(unique(EmpIndex),decreasing=TRUE)),y=y)) +
+  geom_bar(stat="identity",aes(fill=label)) +
+  geom_text(aes(label=EmpIndex),
+            y=0.2,
+            hjust=0,
+            angle=0,
+            size=10,
+            color="#222222") +
+  coord_flip() +
+  my_theme_dark +
+  xlab("Emp Index") +
+  ylab("Product Usage") + 
+  ggtitle("Product Distribution by \n Mean Seniority per Emp Index") +
+  theme(axis.text    = element_blank(),
+        legend.text  = element_text(size=14),
+        legend.title = element_text(size=18)) +
+  scale_fill_manual(values=c("black","purple","red","white"))
+```
+
+
+```{r}
+df %>%
+  group_by(segmentation,label) %>%
+  summarise(y=mean(age)) %>%
+  ggplot(aes(x=factor(segmentation,levels=sort(unique(segmentation),decreasing=TRUE)),y=y)) +
+  geom_bar(stat="identity",aes(fill=label)) +
+  geom_text(aes(label=segmentation),
+            y=0.2,
+            hjust=0,
+            angle=0,
+            size=10,
+            color="#222222") +
+  coord_flip() +
+  my_theme_dark +
+  xlab("Segmentation") +
+  ylab("Product Usage") + 
+  ggtitle("Product Distribution by \n Mean Age per Segmentation") +
+  theme(axis.text    = element_blank(),
+        legend.text  = element_text(size=14),
+        legend.title = element_text(size=18)) +
+  scale_fill_manual(values=c("black","purple","red","white"))
+```
+
+```{r}
+df %>%
+  group_by(segmentation,label) %>%
+  summarise(y=mean(gross_income)) %>%
+  ggplot(aes(x=factor(segmentation,levels=sort(unique(segmentation),decreasing=TRUE)),y=y)) +
+  geom_bar(stat="identity",aes(fill=label)) +
+  geom_text(aes(label=segmentation),
+            y=0.2,
+            hjust=0,
+            angle=0,
+            size=10,
+            color="#222222") +
+  coord_flip() +
+  my_theme_dark +
+  xlab("Segmentation") +
+  ylab("Product Usage") + 
+  ggtitle("Product Distribution by \n Avg Income per Segmentation") +
+  theme(axis.text    = element_blank(),
+        legend.text  = element_text(size=14),
+        legend.title = element_text(size=18)) +
+  scale_fill_manual(values=c("black","purple","red","white"))
+```
+
+```{r}
+df %>%
+  group_by(segmentation,label) %>%
+  summarise(y=mean(Seniority)) %>%
+  ggplot(aes(x=factor(segmentation,levels=sort(unique(segmentation),decreasing=TRUE)),y=y)) +
+  geom_bar(stat="identity",aes(fill=label)) +
+  geom_text(aes(label=segmentation),
+            y=0.2,
+            hjust=0,
+            angle=0,
+            size=10,
+            color="#222222") +
+  coord_flip() +
+  my_theme_dark +
+  xlab("Segmentation") +
+  ylab("Product Usage") + 
+  ggtitle("Product Distribution by \n Avg Seniority per Segment") +
+  theme(axis.text    = element_blank(),
+        legend.text  = element_text(size=14),
+        legend.title = element_text(size=18)) +
+  scale_fill_manual(values=c("black","purple","red","white"))
+```
+
+
+```{r}
+#Read the file Dataset1_subset
+df = read.csv(file.choose())
+str(df)
+table(df$label)
+df$age <- as.numeric(df$age)
+df$Seniority = as.numeric(df$Seniority)
+
+```
+
+
+```{r}
+row <- sample(nrow(df), size = round(nrow(df)*0.035), replace = F)
+df<- df[row,]
+df <- subset(df, select = -c(1,2,3,5,8,12,13,18,21,22, 20, 16, 18))
+str(df)
+```
+
+
+```{r}
+table(df$label)
+df = df[(df$label == 1) | (df$label == 2),]
+df$label[df$label == 1] <- 0
+df$label[df$label == 2] <- 1
+```
+
+```{r}
+table(df$label)
+dim(df)
+```
+
+```{r}
+pMiss <- function(x){sum(is.na(x))/length(x)*100}
+apply(df, 2, pMiss)
+
+#imputation of continous variables with their mean
+df$gross_income <- na.mean(df$gross_income)
+
+
+#Mode function
+Mode <- function(x) {
+    if (is.numeric(x)) {
+        x_table <- table(x)
+        return(as.numeric(names(x_table)[which.max(x_table)]))
+    }
+}
+
+sum(is.na(df$activity_index))
+
+df<- df[-which(is.na(df$activity_index)), ]
+```
+
+```{r}
+str(df)
+```
+
+```{r}
+df$label = as.factor(df$label)
+df$activity_index= as.factor(df$activity_index)
+df$indrel= as.factor(df$indrel)
+df$NewCusIndex= as.factor(df$NewCusIndex)
+```
+
+```{r}
+str(df)
+```
+
+```{r}
+#write.csv(df, "MyDataFinal.csv")
+#save(df, file = "df_subset1.Rdata")
+```
+
+```{r}
+table(df$label)
+```
+
+#Without sampling
+
+```{r}
+train_row <- sample(nrow(df), size = round(nrow(df)*0.70), replace = F)
+df_train <- df[train_row,]
+df_test <- df[-train_row,]
+
+save(df_train, file = "df_train_subset1.Rdata")
+save(df_test, file = "df_test_subset1.Rdata")
+
+table(df_test$label)
+```
+
+```{r}
+
+df_resample=SmoteClassif(label~.,df_train,C.perc = list("0"=0.075,"1"=1),dist="HEOM")
+table(df_resample$label)
+
+```
+
+EDA of the final dataset - Analyzing variables and their relation with the response
+
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+load(file.choose())
+hist(as.numeric(df$label),
+     border="blue",
+     xlab = "products",
+     ylab="count in thousands",
+     xlim = c(1,2),
+     main = "Distribution of the products in the dataset",
+     col="green",
+     probability = TRUE)
+```
+
+From the above graph we could see that labels present in the dataset are distributed unevenly. This depicts the imbalance of classes present in the dataset.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+corr1=cor(df[,c(3,5,12)])
+library(corrplot)
+corrplot.mixed(corr1)
+```
+
+From the correlation plot we could see that there is high positive correlation between age and seniority.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+library(sjPlot)
+library(snakecase)
+df1=df
+for (i in 1:14){
+  if(is.factor(df1[,i])){
+    df1[,i]=as.integer(df[,i])
+  }
+}
+sjp.corr(df1)
+sjt.corr(df1)
+```
+
+From the plot above, we are able to observe the relation between variables present in the dataset.  We could observe there is a high negative correlation between the activity index and the relation type; age and segmentation; seniority vs segmentation.  
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+library(ggplot2)
+str(df)
+```
+
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$sex,y=as.numeric(df$label)))+geom_bar(stat="identity",color="green")+xlab("Sex")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+facet_wrap(~df$label)+ggtitle("Distribution of Sex Vs Label")
+```
+
+The plot shows the number of "H" and "V" factors present in the label classes in the dataset. It could be seen that there more number "v" factor in both classes. 
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$sex,y=as.numeric(df$label),fill=df$age))+geom_bar(stat = "identity")+facet_wrap(~df$label)+labs(fill="age")+xlab("Sex")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Significance of age in Sex Vs Label")
+
+```
+
+The plot constructed shows the significance of age in sex vs label. We could see that age greater than 75 are vaguely present in the dataset.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$NewCusIndex,y=as.numeric(df$label)))+geom_bar(stat="identity",color="red")+xlab("NewCusIndex")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+facet_wrap(~df$label)+ggtitle("Distibution of New Customer Index vs label")
+```
+
+The plot shows distrbution of factors of new customer index "0" and "1" in the dataset. The majority of the new customer belongs to the "0" class.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$NewCusIndex,y=as.numeric(df$label),fill=df$Seniority))+geom_bar(stat = "identity")+facet_wrap(~df$label)+labs(fill="Seniority")+xlab("NewCusIndex")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Significance of Seniority in New Customer Index Vs Label")
+
+```
+
+This plot is generated to understand the effect of seniority in new customer index vs label. Seniority greater than 200 months is scarce in the dataset.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$activity_index,y=as.numeric(df$label)))+geom_bar(stat = "identity",color="blue")+xlab("Activity_index")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+facet_wrap(~df$label)+ggtitle("Distribution of Activity Index vs Label")
+```
+
+The plot shows the activity index distribution with respect to the labels in the dataset. We could see that in class "0" the factors of activity index are high compared to the class "1".
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$activity_index,y=as.numeric(df$label),fill=df$gross_income))+geom_bar(stat = "identity")+facet_wrap(~df$label)+labs(fill="Gross_income")+xlab("Activity_index")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Significance of Gross income in the Activity index vs Label")
+```
+
+The plot is generated to understand the effect of gross income in the activity index vs label. This is done because from the previous plot we were able to understand that the activity index factor distribution was high in class "0" of the label.
+
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$spouse_index,y=as.numeric(df$label)))+geom_bar(stat = "identity",color="yellow")+xlab("Spouse_index")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+facet_wrap(~df$label)+ggtitle("Distribution of Spouse index vs label")
+```
+
+This plot is generated to understand the effect of spouse index with respect to the labels in the dataset.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$spouse_index,y=as.numeric(df$label),fill=df$relation_type))+geom_bar(stat = "identity")+facet_wrap(~df$label)+labs(fill="relation_type")+xlab("Spouse_index")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Significance of relation type in Spouse Index vs Label")
+```
+
+From this plot we are able to observe that in class "0" the relation type is distributed evenly in the spouse index and in class "1" we are able to observe that facotr "i" in relation type is very low in the spouse index.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$indrel,y=as.numeric(df$label)))+geom_bar(stat="identity",color="red")+xlab("Indrel")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+facet_wrap(~df$label)+ggtitle("Distribution of Indrel vs Label")
+```
+
+This plot is generated to understand the effect of Indrel with respect to the labels in the dataset.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$indrel,y=as.numeric(df$label),fill=df$segmentation))+geom_bar(stat = "identity")+facet_wrap(~df$label)+labs(fill="segmentation")+xlab("Indrel")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Significance of Segmentation in Indrel Vs label ")
+
+```
+
+This plot is generated to understand the effect of segmentation in Indrel. We could see that in Class "0" of the label, the factor "1" of indrel the segmentation "02-Particulares" and "03-Universitario" are distributed almost evenly. But in Class "1", majority is in "02- Particulares"
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$relation_type,y=as.numeric(df$label)))+geom_bar(stat="identity",color="blue")+xlab("Relation_type")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+facet_wrap(~df$label)+ggtitle("Distibution of relation type vs Label")
+
+```
+
+This plot is generated to understand the effect of Relation type with respect to the labels in the dataset.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$res_index,y=as.numeric(df$label)))+geom_bar(stat = "identity",color="green")+xlab("res_index")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+facet_wrap(~df$label)+ggtitle("Distribution of Res_index vs label")
+
+```
+
+This plot is generated to understand the effect of Res_index with respect to the labels in the dataset. From the plot most of the values of the res_index belong to the factor"s"
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$res_index,y=as.numeric(df$label),fill=df$segmentation))+geom_bar(stat = "identity")+facet_wrap(~df$label)+labs(fill="segmentation")+xlab("res_index")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Significance of Segmentation in Res_index vs label")
+
+```
+
+This plot is generated to understand the effect of segmentation in the res_index. From the observations of the previous plot it is seen that "02-Particulares" and "03-Universitario" are the distributed widely.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$res_index,y=as.numeric(df$label),fill=df$relation_type))+geom_bar(stat = "identity")+facet_wrap(~df$label)+labs(fill="relation_type")+xlab("res_index")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Significance of Relation Type in Res_index vs label")
+
+```
+
+This plot is generated to understand the effect of Relation_type in the res_index. We can observe that relation types "A" and "I" are distributed evenly in the dataset. Whereas in class "1" the predominant relation type is "A".
+
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$Deceased,y=as.numeric(df$label)))+geom_bar(stat="identity",color="yellow")+xlab("Deceased")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+facet_wrap(~df$label)+ggtitle("Distribution of Deceased vs Label")
+
+```
+
+This plot is generated to understand the effect of Deceased with respect to the labels in the dataset. 
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$Deceased,y=as.numeric(df$label),fill=df$sex))+geom_bar(stat = "identity")+facet_wrap(~df$label)+labs(fill="sex")+xlab("Deceased")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Significance of Sex in Deceased vs Label")
+
+```
+
+This Plot is generated to understand the influence of Sex in the Deceased vs label. We could observe in an even distribtuion in sex for factor "N" in both classes.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$Deceased,y=as.numeric(df$label),fill=df$activity_index))+geom_bar(stat = "identity")+facet_wrap(~df$label)+labs(fill="Activity_index")+xlab("Deceased")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Significance of Activity Index in Deceased vs Label")
+
+```
+
+From the plot generated we could observe the factor "N" for class"0" and Class "1". it is eveny distributed in the former and "1" is predominant in the latter.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$segmentation,y=as.numeric(df$label)))+geom_bar(stat = "identity")+xlab("Segmentation")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+facet_wrap(~df$label)+ggtitle("Distribution of Segmentation vs Label")
+
+```
+
+This plot is generated to understand the effect of Segmentation with respect to the labels in the dataset. "02-Particulares" is found to be majorrly distributed for both classes.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$segmentation,y=as.numeric(df$label),fill=df$Seniority))+geom_bar(stat = "identity")+facet_wrap(~df$label)+labs(fill="Seniority")+xlab("Segmentation")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Significance of Senority in Segmentation vs label")
+
+```
+
+This Plot is generated to understand the influence of Senority in the Segmentation vs label. We could observe the majority of values less than 50 in the "03-Universitario" and 50 to 200 in "02- Particulares" and above 200 in the "01-Top"
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$segmentation,y=as.numeric(df$label),fill=df$relation_type))+geom_bar(stat = "identity")+facet_wrap(~df$label)+labs(fill="relation_type")+xlab("Segmentation")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Significance of Relation Type in Segmentation vs label")
+
+```
+
+From this plot we can observe that in Class "1" we could see that relation type "I" is not present. In Class"0" the relation type"I" is present evently in "02-Particulares" and majorly present in "03-Universitario"
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(x=df$segmentation,y=as.numeric(df$label),fill=df$activity_index))+geom_bar(stat = "identity")+facet_wrap(~df$label)+labs(fill="Activity_index")+xlab("Segmentation")+ylab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Significance of Activity Index in Segmentation vs label")
+
+```
+
+From this plot we can observe that in Class "1" we could see that Activity Index "0" is not present. In Class"0" the Activity Index "0" is present evently in "02-Particulares" and majorly present in "03-Universitario"
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(y=df$age,x=df$label))+geom_violin(color="red",fill="yellow")+ylab("age")+xlab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Distribution of age vs label")
+
+```
+
+The violin plot sugests that the in class"0" the large number of values for the age are found below 25 and in class"1" the age is nornally distributed with the peak at 30.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(y=df$age,x=df$label))+geom_violin(color="red",aes(fill=df$spouse_index))+ylab("age")+xlab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Effect of Spouse index in age vs label")+labs(fill="Spouse_index")
+
+```
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(y=df$age,x=df$label))+geom_violin(color="red",aes(fill=df$res_index))+ylab("age")+xlab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Effect of Res_index in age vs label")+labs(fill="Res_index")
+
+```
+
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(y=df$age,x=df$label))+geom_violin(color="red",aes(fill=df$Deceased))+ylab("age")+xlab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Effect of Deceased in Age vs Label")+labs(fill="Deceased")
+
+```
+
+From the plot we could see that the factor "N" of deceased is spread in class "1" for ages 25 to 50 and for class"0" in less than 25.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(y=df$age,x=df$label))+geom_violin(color="red",aes(fill=df$segmentation))+ylab("age")+xlab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Effect of Segmentation in Age vs Label")+labs(fill="Segmentation")
+
+```
+
+From the plot for ages less than 25 there's a wide spread in the "03-Universitario".
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(y=df$Seniority,x=df$label))+geom_violin(color="red",fill="yellow")+ylab("Seniority")+xlab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Distribution of Seniority vs Label")
+
+```
+
+From this plot for class"1" we could see that seniority remains constant after 50 months whereas for class"0" the seniority varies periodically.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(y=df$Seniority,x=df$label))+geom_violin(color="red",aes(fill=df$activity_index))+ylab("Seniority")+xlab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Effect of Activity Index in Age vs Label")+labs(fill="Activity_index")
+
+```
+
+For both classes the activity index"1"" is similarly distributed whereas for activity index"0" in clas "0" there is a huge drop after 50 months and there's a slight increase and decrease after 50 months. In class"1"there's slow decay in the value.
+
+```{r,fig.width=10, fig.height=7, fig.align='center',warning=FALSE, echo= FALSE}
+ggplot(df,aes(y=df$Seniority,x=df$label))+geom_violin(color="red",aes(fill=df$segmentation))+ylab("Seniority")+xlab("label")+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ggtitle("Effect of Segmentation in Seniority vs Label")+labs(fill="Segmentation")
+
+```
+
+From this plot we can observe huge vibrations present for "03-Universitario" in class"0" till 50 and then there is very minimal value till the 150 and it goes to zero. Similar pattern excludingthe vibration present below 50 is observed in class"1".
+
+
+```{r}
+ggplot(df_train, aes(df_train$label)) + geom_bar() + ggtitle("Distribution of class labels") + xlab("Class labels") + ylab("Number of Values")
+```
+
+DECISION TREE
+
+Original Train - Without Resampling
+
+```{r}
+
+tree_fit <- train(label~., data = df_train, method = "rpart",trControl = trainControl(method = "cv", number = 10))
+
+plot(tree_fit)
+tree_fit$results
+cp = tree_fit$bestTune[1,1]
+
+predictions = predict(tree_fit, newdata = df_train)
+
+
+confusionMatrix(predictions, df_train$label, mode = "prec_recall", positive="1")
+
+
+```
+
+#Now train using the sample
+
+```{r}
+tree_fit <- train(label~., data = df_resample, method = "rpart",trControl = trainControl(method = "cv", number = 10))
+plot(tree_fit)
+tree_fit$results
+cp = tree_fit$bestTune[1,1]
+
+predictions = predict(tree_fit, newdata = df_train)
+
+confusionMatrix(predictions, df_train$label, mode = "prec_recall", positive="1")
+
+
+#we see recall increasing, now tuning further with decision tree on resampled
+```
+
+```{r}
+train.control <- trainControl(
+                           method = "repeatedcv",
+                           number = 10, 
+                           repeats = 3,
+                           search = "random"
+                           )
+
+
+tree_fit <- train(label~., data = df_resample, method = "rpart",trControl = train.control)
+plot(tree_fit)
+tree_fit$bestTune
+cp = tree_fit$bestTune[1,1]
+
+predictions = predict(tree_fit, newdata = df_train)
+
+confusionMatrix(predictions, df_train$label, mode = "prec_recall", positive="1")
+
+#not a significant change
+```
+
+```{r}
+
+#Tuning further
+
+tune.gridcart <- expand.grid(maxdepth = c(1,2,3,4,5,6,7,8,9,10))
+train.control <- trainControl(
+                           method = "repeatedcv",
+                           number = 10, 
+                           repeats = 3,
+                           search = "random"
+                           )
+
+tree_fit <- train(label~., data = df_resample, method = "rpart",trControl = train.control) #tuneGrid =tune.gridcart)
+
+tree_fit$bestTune
+
+predictions = predict(tree_fit, newdata = df_train)
+confusionMatrix(predictions, df_train$label, mode = "prec_recall", positive="1")
+
+
+#Test set
+
+predictions = predict(tree_fit, newdata = df_test)
+confusionMatrix(predictions, df_test$label, mode = "prec_recall", positive="1")
+
+```
+
+RANDOM FOREST
+
+
+Original Training - Imbalanced Dataset
+
+```{r}
+#dt_grid <-  expand.grid(cp = c(0.1, 0.01, 0.001, 0.0001), 
+                        #maxdepth = c(20,30,40,50,60))
+rf_fit <- train(label~., data = df_train, method = "rf",trControl = trainControl(method = "cv", number = 5, search = "random"))
+plot(rf_fit)
+rf_fit$bestTune
+
+predictions = predict(rf_fit, newdata = df_train)
+
+
+confusionMatrix(predictions, df_train$label, mode = "prec_recall", positive="1")
+
+
+```
+
+Training using Resampled Data
+
+
+```{r}
+
+#dt_grid <-  expand.grid(cp = c(0.1, 0.01, 0.001, 0.0001), 
+                        #maxdepth = c(20,30,40,50,60))
+rf_fit <- train(label~., data = df_resample, method = "rf",trControl = trainControl(method = "cv", number = 5, search = "random"))
+plot(rf_fit)
+
+
+predictions = predict(rf_fit, newdata = df_train)
+
+
+confusionMatrix(predictions, df_train$label, mode = "prec_recall", positive="1")
+
+
+```
+
+Using CV to select the number of variables in each tree and total number of trees
+
+```{r}
+
+rf_random <- train(label~., data=df_train, method="rf", tuneLength=10, trControl=trainControl(method="cv", number=5, search="random"))
+
+plot(rf_random)
+rf_random$finalModel
+num_selected_pred <- rf_random$bestTune[1,1]
+
+
+predictions = predict(rf_fit, newdata = df_train)
+
+
+confusionMatrix(predictions, df_train$label)
+
+
+
+```
+
+Final Random Forest Model
+
+```{r}
+rf_random <- train(label~., data=df_resample, method="rf", tuneLength=10, trControl=trainControl(method="cv", number=5, search="random"))
+
+plot(rf_random)
+rf_random$bestTune
+
+
+predictions = predict(rf_random, newdata = df_train)
+
+confusionMatrix(predictions, df_train$label, mode = "prec_recall", positive="1")
+
+#testing set
+
+predictions = predict(rf_random, newdata = df_test)
+confusionMatrix(predictions, df_test$label, mode = "prec_recall", positive="1")
+
+model_RF <- randomForest(label~., mtry = 7 , data = df_train, n.trees = 500)
+varImpPlot(model_RF)
+
+```
+
+GRADIENT BOOSTING
+
+
+```{r}
+
+fit.gbm <- train(label~., data = df_train, method = "gbm", trControl=trainControl(method="cv", number=5, search = "random"))
+
+fit.gbm$bestTune
+
+n.trees <- fit.gbm$bestTune['n.trees'][1,1]
+interaction.depth <- fit.gbm$bestTune['interaction.depth'][1,1]
+shrinkage <- fit.gbm$bestTune['shrinkage'][1,1]
+n.minobsinnode <- fit.gbm$bestTune['n.minobsinnode'][1,1]
+
+predictions = predict(fit.gbm, newdata = df_train)
+
+
+confusionMatrix(predictions, df_train$label, mode = "prec_recall", positive="1")
+
+
+```
+
+```{r}
+fit.gbm <- train(label~., data = df_resample, method = "gbm", trControl=trainControl(method="cv", number=5, search = "random"))
+
+fit.gbm$bestTune
+
+n.trees <- fit.gbm$bestTune['n.trees'][1,1]
+interaction.depth <- fit.gbm$bestTune['interaction.depth'][1,1]
+shrinkage <- fit.gbm$bestTune['shrinkage'][1,1]
+n.minobsinnode <- fit.gbm$bestTune['n.minobsinnode'][1,1]
+
+predictions = predict(fit.gbm, newdata = df_train)
+
+
+confusionMatrix(predictions, df_train$label, mode = "prec_recall", positive="1")
+
+
+#test
+predictions = predict(fit.gbm, newdata = df_test)
+
+
+confusionMatrix(predictions, df_test$label, mode = "prec_recall", positive="1")
+
+
+
+```
+
+SUPPORT VECTOR MACHINE
+
+```{r}
+
+
+svm_data_train=train(label~.,data = df_train,method="svmRadial",trcontrol=trainControl(method="cv",number=5,search = "random"))
+svm_data_train$bestTune
+
+svm_model_1=svm(label~.,data=df_train,cost=1)
+svm_predict_df_train=predict(svm_model_1,df_train)
+confusionMatrix(svm_predict_df_train, df_train$label, mode = "prec_recall", positive="1")
+
+
+#training for resampled data
+svm_data_resample=train(label~.,data = df_resample,method="svmRadial",trcontrol=trainControl(method="cv",number=5,search = "random"))
+svm_data_resample$bestTune
+svm_model_2=svm(label~.,data=df_resample,cost=0.25)
+
+#predicting original train data
+svm_predict_df_resample=predict(svm_model_2,df_train)
+confusionMatrix(svm_predict_df_resample, df_train$label, mode = "prec_recall", positive="1")
+
+#testing
+svm_predict_df_test=predict(svm_model_2,df_test)
+confusionMatrix(svm_predict_df_test, df_test$label, mode = "prec_recall", positive="1")
+
+```
+
+
+LOGISTIC REGRESSION
+
+```{r}
+
+### Making the first model using df_train i.e. without sampling models ###
+
+logistic_fit <- train(label~., data = df_train, method = "glm",trControl = trainControl(method = "cv", number = 10))
+predictedY <- predict(logistic_fit, df_train,type="prob")
+
+fitted.results <- ifelse(predictedY[2]> 0.5,1,0)
+fitted.results<-as.factor(fitted.results)
+
+confusionMatrix(fitted.results,df_train$label,mode = "prec_recall", positive="1")
+
+```
+
+
+```{r}
+
+#training the model using resampled data
+logistic_fit <- train(label~., data = df_resample, method = "glm",trControl = trainControl(method = "cv", number = 10))
+
+predictedY_logistic <- predict(logistic_fit, df_train,type="prob")
+
+fitted.results <- ifelse(predictedY_logistic[2]> 0.5,1,0)
+fitted.results<-as.factor(fitted.results)
+
+confusionMatrix(fitted.results,df_train$label,mode = "prec_recall", positive="1")
+summary(logistic)
+```
+
+```{r}
+#### using testing data ####
+
+predictedY_logistic_test <- predict(logistic_fit, df_test,type="prob")
+
+fitted.results <- ifelse(predictedY_logistic_test[2]> 0.5,1,0)
+fitted.results<-as.factor(fitted.results)
+
+confusionMatrix(fitted.results,df_test$label,mode = "prec_recall", positive="1")
+
+```
+
+BART
+
+```{r}
+
+########################### BART #######################
+
+response <-df_resample$label
+covariate<-subset(df_resample,select=-c(label))
+
+covariate_train<-subset(df_train,select=-c(label))
+
+#model8 <-bartMachine(X = covariate,y=response)
+model8 <- bartMachine(X = covariate ,y=response,num_trees = 100, k = 2, alpha = 0.95, beta = 2,nu=3.5,q=0.9,serialize=TRUE)
+
+## Calculating training scores ##
+predictedY<-predict(model8,new_data=covariate_train,type='class')
+fitted.results<-as.factor(predictedY)
+confusionMatrix(fitted.results,df_train$label,mode = "prec_recall", positive="1")
+```
+
+```{r}
+
+### calculating testing scores ##
+response <-df_resample$label
+covariate_test<-subset(df_test,select=-c(label))
+predictedY<-predict(model8,new_data=covariate_test,type='class')
+fitted.results<-as.factor(predictedY)
+
+confusionMatrix(fitted.results,df_test$label,mode = "prec_recall", positive="1")
+```
+
+
+```{r}
+###plots for diagnosis##
+
+plot_convergence_diagnostics(model8)
+pd_plot(model8, j="gross_income")
+pd_plot(model8, j = "Seniority")
+investigate_var_importance(model8,num_var_plot = 10, num_replicates_for_avg = 50)
+
+
+```
+
+
+```{r}
+save(list=ls(all=T), file='Project.RData')
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
